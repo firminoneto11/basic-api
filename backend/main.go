@@ -8,11 +8,29 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
 )
 
-type Controller struct {
-	eventsChannel chan Event
+func main() {
+	app := getApp()
+	setCors(app)
+	addRouter(app)
+	app.Listen(":5555")
+}
+
+type Channel struct {
+	id     string
+	closed bool
+	ch     chan Event
+}
+
+func (instance *Channel) close() {
+	if instance.closed {
+		return
+	}
+	instance.closed = true
+	close(instance.ch)
 }
 
 type Event struct {
@@ -20,23 +38,16 @@ type Event struct {
 	Data string `json:"data"`
 }
 
-func main() {
-	app := getApp()
-	eventsChannel := make(chan Event, 1_000)
-	setCors(app)
-	addRouter(app, eventsChannel)
-	app.Listen(":5555")
-}
-
 func getApp() *fiber.App {
 	app := fiber.New()
 	return app
 }
 
-func addRouter(app *fiber.App, eventsChannel chan Event) {
+func addRouter(app *fiber.App) {
 	router := app.Group("/api")
 
-	controller := Controller{eventsChannel}
+	messageBus := make([]*Channel, 0)
+	controller := Controller{messageBus: messageBus}
 
 	router.Get("/sse/", controller.sse)
 	router.Post("/events/", controller.newEvent)
@@ -50,28 +61,43 @@ func setCors(app *fiber.App) {
 	app.Use(cors.New(config))
 }
 
+func uuid4() string {
+	id := uuid.New()
+	return id.String()
+}
+
+type Controller struct {
+	messageBus []*Channel
+}
+
 func (instance *Controller) sse(ctx *fiber.Ctx) error {
 	// Upgrading the HTTP connection to be in the SSE format
 	ctx.Set("Content-Type", "text/event-stream")
 	ctx.Set("Cache-Control", "no-cache")
 	ctx.Set("Connection", "keep-alive")
-	ctx.Set("Transfer-Encoding", "chunked")
+	// ctx.Set("Transfer-Encoding", "chunked")
+
+	eventsChannel := &Channel{id: uuid4(), ch: make(chan Event, 1_000), closed: false}
+
+	instance.add(eventsChannel)
+	defer instance.remove(eventsChannel)
 
 	streamWriter := fasthttp.StreamWriter(
 		func(ioWriter *bufio.Writer) {
 
-			go func() {
+			go func(iow *bufio.Writer) {
 				for {
-					fmt.Fprintf(ioWriter, "event: heartbeat\n\n")
-					err := ioWriter.Flush()
+					message := "event: message\ndata: " + `{"type": "heartbeat", "data": null}` + "\n\n"
+					fmt.Fprint(iow, message)
+					err := iow.Flush()
 					if err != nil {
 						break
 					}
 					time.Sleep(time.Second)
 				}
-			}()
+			}(ioWriter)
 
-			for event := range instance.eventsChannel {
+			for event := range eventsChannel.ch {
 				binary, err := json.Marshal(event)
 				if err != nil {
 					fmt.Println(err)
@@ -80,6 +106,8 @@ func (instance *Controller) sse(ctx *fiber.Ctx) error {
 
 				message := "event: message\ndata: " + string(binary) + "\n\n"
 				fmt.Fprint(ioWriter, message)
+
+				fmt.Println("What?")
 
 				err = ioWriter.Flush()
 				if err != nil {
@@ -108,7 +136,30 @@ func (instance *Controller) newEvent(ctx *fiber.Ctx) error {
 		event.Type = "default"
 	}
 
-	instance.eventsChannel <- event
+	instance.broadcast(event)
 
 	return ctx.JSON(fiber.Map{"details": "Message sent successfully!"})
+}
+
+func (instance *Controller) broadcast(event Event) {
+	for _, channel := range instance.messageBus {
+		if !channel.closed {
+			channel.ch <- event
+		}
+	}
+}
+
+func (instance *Controller) add(channel *Channel) {
+	instance.messageBus = append(instance.messageBus, channel)
+}
+
+func (instance *Controller) remove(channel *Channel) {
+	newArray := make([]*Channel, 0)
+	for _, value := range *instance.messageBus {
+		if value.id != channel.id {
+			newArray = append(newArray, value)
+		}
+	}
+	instance.messageBus = &newArray
+	channel.close()
 }

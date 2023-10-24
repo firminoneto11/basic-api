@@ -13,6 +13,11 @@
       const div = document.getElementById("events");
       const messageHandler = (event) => {
         const message = JSON.parse(event.data);
+
+        if (message.type == "heartbeat") {
+          return console.log("Heartbeat received");
+        }
+
         const newNode = document.createElement("p");
         newNode.innerText = `Event's type: ${message.type} - Data: ${message.data}`;
         div.appendChild(newNode);
