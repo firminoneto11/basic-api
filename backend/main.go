@@ -13,34 +13,10 @@ import (
 )
 
 func main() {
-	app := getApp()
+	app := fiber.New()
 	setCors(app)
 	addRouter(app)
 	app.Listen(":5555")
-}
-
-type Channel struct {
-	id     string
-	closed bool
-	ch     chan Event
-}
-
-func (instance *Channel) close() {
-	if instance.closed {
-		return
-	}
-	instance.closed = true
-	close(instance.ch)
-}
-
-type Event struct {
-	Type string `json:"type"`
-	Data string `json:"data"`
-}
-
-func getApp() *fiber.App {
-	app := fiber.New()
-	return app
 }
 
 func addRouter(app *fiber.App) {
@@ -66,6 +42,25 @@ func uuid4() string {
 	return id.String()
 }
 
+type Event struct {
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+type Channel struct {
+	id     string
+	closed bool
+	ch     chan Event
+}
+
+func (instance *Channel) close() {
+	if instance.closed {
+		return
+	}
+	instance.closed = true
+	close(instance.ch)
+}
+
 type Controller struct {
 	messageBus []*Channel
 }
@@ -75,27 +70,27 @@ func (instance *Controller) sse(ctx *fiber.Ctx) error {
 	ctx.Set("Content-Type", "text/event-stream")
 	ctx.Set("Cache-Control", "no-cache")
 	ctx.Set("Connection", "keep-alive")
-	// ctx.Set("Transfer-Encoding", "chunked")
+	ctx.Set("Transfer-Encoding", "chunked")
 
 	eventsChannel := &Channel{id: uuid4(), ch: make(chan Event, 1_000), closed: false}
 
 	instance.add(eventsChannel)
-	defer instance.remove(eventsChannel)
 
 	streamWriter := fasthttp.StreamWriter(
 		func(ioWriter *bufio.Writer) {
 
-			go func(iow *bufio.Writer) {
+			go func(iow *bufio.Writer, ctr *Controller, channel *Channel) {
 				for {
 					message := "event: message\ndata: " + `{"type": "heartbeat", "data": null}` + "\n\n"
 					fmt.Fprint(iow, message)
 					err := iow.Flush()
 					if err != nil {
+						ctr.remove(channel)
 						break
 					}
 					time.Sleep(time.Second)
 				}
-			}(ioWriter)
+			}(ioWriter, instance, eventsChannel)
 
 			for event := range eventsChannel.ch {
 				binary, err := json.Marshal(event)
@@ -107,10 +102,9 @@ func (instance *Controller) sse(ctx *fiber.Ctx) error {
 				message := "event: message\ndata: " + string(binary) + "\n\n"
 				fmt.Fprint(ioWriter, message)
 
-				fmt.Println("What?")
-
 				err = ioWriter.Flush()
 				if err != nil {
+					instance.remove(eventsChannel)
 					break
 				}
 			}
@@ -155,11 +149,11 @@ func (instance *Controller) add(channel *Channel) {
 
 func (instance *Controller) remove(channel *Channel) {
 	newArray := make([]*Channel, 0)
-	for _, value := range *instance.messageBus {
+	for _, value := range instance.messageBus {
 		if value.id != channel.id {
 			newArray = append(newArray, value)
 		}
 	}
-	instance.messageBus = &newArray
+	instance.messageBus = newArray
 	channel.close()
 }
