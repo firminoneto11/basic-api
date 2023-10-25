@@ -46,12 +46,33 @@ func sendHeartbeat(iow *bufio.Writer, ctr *Controller, channel *Channel) {
 	for {
 		message := "event: message\ndata: " + `{"type": "heartbeat", "data": null}` + "\n\n"
 		fmt.Fprint(iow, message)
+
 		err := iow.Flush()
 		if err != nil {
 			ctr.remove(channel)
 			break
 		}
+
 		time.Sleep(time.Second)
+	}
+}
+
+func listenChannel(iow *bufio.Writer, ctr *Controller, channel *Channel) {
+	for event := range channel.ch {
+		byteArray, err := json.Marshal(event)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		message := "event: message\ndata: " + string(byteArray) + "\n\n"
+		fmt.Fprint(iow, message)
+
+		err = iow.Flush()
+		if err != nil {
+			ctr.remove(channel)
+			break
+		}
 	}
 }
 
@@ -86,30 +107,12 @@ func (instance *Controller) sse(ctx *fiber.Ctx) error {
 	ctx.Set("Transfer-Encoding", "chunked")
 
 	eventsChannel := &Channel{id: uuid4(), ch: make(chan Event, 1_000), closed: false}
-
 	instance.add(eventsChannel)
 
 	streamWriter := fasthttp.StreamWriter(
 		func(ioWriter *bufio.Writer) {
-
 			go sendHeartbeat(ioWriter, instance, eventsChannel)
-
-			for event := range eventsChannel.ch {
-				binary, err := json.Marshal(event)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-
-				message := "event: message\ndata: " + string(binary) + "\n\n"
-				fmt.Fprint(ioWriter, message)
-
-				err = ioWriter.Flush()
-				if err != nil {
-					instance.remove(eventsChannel)
-					break
-				}
-			}
+			listenChannel(ioWriter, instance, eventsChannel)
 		},
 	)
 
