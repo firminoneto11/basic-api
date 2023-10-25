@@ -42,6 +42,19 @@ func uuid4() string {
 	return id.String()
 }
 
+func sendHeartbeat(iow *bufio.Writer, ctr *Controller, channel *Channel) {
+	for {
+		message := "event: message\ndata: " + `{"type": "heartbeat", "data": null}` + "\n\n"
+		fmt.Fprint(iow, message)
+		err := iow.Flush()
+		if err != nil {
+			ctr.remove(channel)
+			break
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 type Event struct {
 	Type string `json:"type"`
 	Data string `json:"data"`
@@ -79,18 +92,7 @@ func (instance *Controller) sse(ctx *fiber.Ctx) error {
 	streamWriter := fasthttp.StreamWriter(
 		func(ioWriter *bufio.Writer) {
 
-			go func(iow *bufio.Writer, ctr *Controller, channel *Channel) {
-				for {
-					message := "event: message\ndata: " + `{"type": "heartbeat", "data": null}` + "\n\n"
-					fmt.Fprint(iow, message)
-					err := iow.Flush()
-					if err != nil {
-						ctr.remove(channel)
-						break
-					}
-					time.Sleep(time.Second)
-				}
-			}(ioWriter, instance, eventsChannel)
+			go sendHeartbeat(ioWriter, instance, eventsChannel)
 
 			for event := range eventsChannel.ch {
 				binary, err := json.Marshal(event)
@@ -136,6 +138,9 @@ func (instance *Controller) newEvent(ctx *fiber.Ctx) error {
 }
 
 func (instance *Controller) broadcast(event Event) {
+	if len(instance.messageBus) == 0 {
+		return
+	}
 	for _, channel := range instance.messageBus {
 		if !channel.closed {
 			channel.ch <- event
