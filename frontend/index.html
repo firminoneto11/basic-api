@@ -24,7 +24,7 @@
       };
 
       document.addEventListener("DOMContentLoaded", () => {
-        const source = new EventSource(`http://localhost:5555/api/sse/`);
+        const source = new EventSource(`https://fneto.xyz/api/sse/`);
         source.addEventListener("message", messageHandler);
       });
     </script>
