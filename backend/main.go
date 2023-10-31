@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -85,9 +86,12 @@ type Channel struct {
 	id     string
 	closed bool
 	ch     chan Event
+	mutex  sync.RWMutex
 }
 
 func (instance *Channel) close() {
+	instance.mutex.Lock()
+	defer instance.mutex.Unlock()
 	if instance.closed {
 		return
 	}
@@ -145,9 +149,11 @@ func (instance *Controller) broadcast(event Event) {
 		return
 	}
 	for _, channel := range instance.messageBus {
+		channel.mutex.RLock()
 		if !channel.closed {
 			channel.ch <- event
 		}
+		channel.mutex.RUnlock()
 	}
 }
 
