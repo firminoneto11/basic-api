@@ -95,8 +95,8 @@ func (instance *Channel) close() {
 	if instance.closed {
 		return
 	}
-	instance.closed = true
 	close(instance.ch)
+	instance.closed = true
 }
 
 type Controller struct {
