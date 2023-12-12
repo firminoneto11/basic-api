@@ -39,8 +39,7 @@ func setCors(app *fiber.App) {
 }
 
 func uuid4() string {
-	id := uuid.New()
-	return id.String()
+	return uuid.New().String()
 }
 
 func sendHeartbeat(iow *bufio.Writer, ctr *Controller, channel *Channel) {
@@ -139,7 +138,7 @@ func (instance *Controller) newEvent(ctx *fiber.Ctx) error {
 		event.Type = "default"
 	}
 
-	instance.broadcast(event)
+	go instance.broadcast(event)
 
 	return ctx.JSON(fiber.Map{"details": "Message sent successfully!"})
 }
@@ -149,11 +148,11 @@ func (instance *Controller) broadcast(event Event) {
 		return
 	}
 	for _, channel := range instance.messageBus {
-		channel.mutex.RLock()
+		channel.mutex.Lock()
 		if !channel.closed {
 			channel.ch <- event
 		}
-		channel.mutex.RUnlock()
+		channel.mutex.Unlock()
 	}
 }
 
